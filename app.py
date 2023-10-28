@@ -1,203 +1,138 @@
-import pymongo
 import streamlit as st
+from pymongo import MongoClient
 import datetime
-import pandas as pd  # Import pandas library
+import pandas as pd
 
-# Replace with your MongoDB connection string
-mongo_uri = "mongodb+srv://root1:1234@cluster0.bcqibzg.mongodb.net/"
+# Connect to MongoDB
+mongo_uri = "mongodb+srv://root1:1234@cluster0.bcqibzg.mongodb.net/INVENTORY-MANAGE"
+client = MongoClient(mongo_uri)
+db = client['INVENTORY-MANAGE']
+products_collection = db['products']
+sales_collection = db['sales']
 
-# Create a MongoDB client and database
-client = pymongo.MongoClient(mongo_uri)
-db = client["inventory_db"]
+# Define the username and password
+correct_username = "admin"
+correct_password = "admin"
 
-# Set Streamlit page configuration (layout)
-st.set_page_config(layout="wide")
+# Function to fetch data from MongoDB and return it as a Pandas DataFrame
+def fetch_data_as_dataframe(collection):
+    data = list(collection.find())
+    df = pd.DataFrame(data)
+    return df
 
-# Streamlit app title and sidebar navigation
-app_title = "Inventory Management System"
+# Create a login page
+st.sidebar.title("Login")
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
 
-# Define empty lists for product data
-product_names = []
-product_quantities = []
-purchase_requirements = []
-sales_quantities = []
+if username == correct_username and password == correct_password:
+    st.sidebar.success("Login successful!")
+    page = st.sidebar.radio("Select a page", ["All Fields", "Add Product", "Record Sales", "Dashboard"])
+else:
+    st.sidebar.error("Login failed. Please provide the correct username and password.")
+    st.stop()
 
-# Login page
-login = False
+# Continue with the rest of the code only if login is successful
 
-if not login:
-    st.title(app_title)
-    username = st.text_input("Username", key="login_username")
-    password = st.text_input("Password", type="password", key="login_password")
+# Sidebar
+if page == "All Fields":
+    st.title("All Fields")
+    all_fields = products_collection.find()
+    for field in all_fields:
+        st.write(f"Product: {field['name']}, Quantity: {field['qty']}, Price: {field['price']}")
 
-    if username == "KAZEM123@" and password == "KAZEM@123":
-        login = True
+# Add Product
+elif page == "Add Product":
+    st.title("Add Product")
+    product_name = st.text_input("Product Name")
+    product_qty = st.number_input("Product Quantity", value=1)
+    product_price = st.number_input("Product Price")
 
-if login:
-    login_placeholder = st.empty()  # Create an empty placeholder for the login content
-    login_placeholder.empty()  # Clear the login content
+    # Suggest existing product names
+    product_names = [product["name"] for product in products_collection.find()]
+    selected_product_name = st.selectbox("Select from existing products", ["Create New"] + product_names, key='existing_products')
 
-    page = st.sidebar.selectbox("Select Page", ["Add Product", "Sales", "Dashboard", "Monthly Report"])
+    existing_product_data = None
+    if selected_product_name != "Create New":
+        existing_product_data = products_collection.find_one({"name": selected_product_name})
 
-    if page == "Add Product":
-        # Page to add products
-        st.header("Add Product")
+    if existing_product_data:
+        st.write(f"Previous Quantity: {existing_product_data['qty']}, Previous Price: {existing_product_data['price']}")
 
-        # Input field for product name with autocomplete
-        product_name = st.text_input("Product Name")
-        product_name_suggestions = [product["name"] for product in db.products.find({"name": {"$regex": f'^{product_name}', "$options": "i"}})]
-        if product_name_suggestions:
-            selected_product_name = st.selectbox("Select Product Name", product_name_suggestions, key='product_name_suggestions')
+    if st.button("Add Product"):
+        if existing_product_data:
+            # Update existing product
+            updated_qty = existing_product_data["qty"] + product_qty
+            updated_price = product_price
+            products_collection.update_one({"name": selected_product_name}, {"$set": {"qty": updated_qty, "price": updated_price}})
+            st.success(f"Updated {selected_product_name} with new quantity and price.")
         else:
-            selected_product_name = product_name
-
-        product_quantity = st.number_input("Product Quantity", value=0)
-        product_price = st.number_input("Product Price", value=0.0)
-
-        if st.button("Add Product"):
-            # Check if the product name already exists in the database
-            existing_product = db.products.find_one({"name": selected_product_name})
-
-            if existing_product:
-                # Product with the same name exists; suggest an update
-                st.warning(f"A product with the name '{selected_product_name}' already exists.")
-                st.write("You can update the price and quantity of the existing product or choose a different name.")
-
-                update_price = st.number_input("Update Product Price", value=existing_product["price"])
-                update_quantity = st.number_input("Update Product Quantity", value=existing_product["quantity"])
-
-                if st.button("Update Product"):
-                    # Update the existing product
-                    db.products.update_one(
-                        {"name": selected_product_name},
-                        {"$set": {"quantity": update_quantity, "price": update_price}}
-                    )
-                    st.success(f"Product '{selected_product_name}' updated successfully.")
-            else:
-                # Product with the same name doesn't exist; add a new product
+            if product_name:
+                # Create a new product
                 product_data = {
-                    "name": selected_product_name,
-                    "quantity": product_quantity,
+                    "name": product_name,
+                    "qty": product_qty,
                     "price": product_price,
-                    "purchase_date": datetime.datetime.now()  # Add purchase date
+                    "added_date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Record added date
                 }
-                db.products.insert_one(product_data)
-                st.success(f"Product '{selected_product_name}' added successfully.")
-
-    elif page == "Sales":
-        # Page to process sales
-        st.header("Sales")
-        st.write("Select the product, enter price, and quantity to process a sale.")
-
-        # Retrieve and display product data
-        products = db.products.find()
-        product_list = [product["name"] for product in products]
-
-        selected_product = st.selectbox("Select Product", product_list)
-        sales_price = st.number_input("Enter Sales Price", value=0.0)
-        sales_quantity = st.number_input("Enter Quantity", value=0)
-
-        if st.button("Process Sale"):
-            # Update product quantity and calculate sales price in MongoDB
-            product_data = db.products.find_one({"name": selected_product})
-            if product_data:
-                if product_data["quantity"] >= sales_quantity:
-                    updated_quantity = product_data["quantity"] - sales_quantity
-                    db.products.update_one(
-                        {"name": selected_product},
-                        {"$set": {"quantity": updated_quantity}}
-                    )
-                    sales_total = sales_quantity * sales_price
-                    st.success(f"Sale processed for {sales_quantity} units of {selected_product}. Sales Price: ${sales_total:.2f}")
-                else:
-                    st.error(f"Insufficient quantity of {selected_product} in the inventory.")
+                products_collection.insert_one(product_data)
+                st.success(f"Added {product_data['name']} to the inventory.")
             else:
-                st.error(f"Product '{selected_product}' not found in the inventory.")
+                st.error("Please enter a product name to create a new product.")
 
-    elif page == "Dashboard":
-        # Page to show the dashboard
-        st.header("Dashboard")
+# Record Sales
+elif page == "Record Sales":
+    st.title("Record Sales")
+    product_options = [product["name"] for product in products_collection.find()]
+    selected_product = st.selectbox("Select Product for Sales", product_options)
+    sales_qty = st.number_input("Sales Quantity", value=1)
+    sales_price = st.number_input("Sales Price")
 
-        # Retrieve and display product data
-        products = db.products.find()
+    if st.button("Record Sales"):
+        product_data = products_collection.find_one({"name": selected_product})
+        if product_data:
+            available_qty = product_data["qty"] - sales_qty
 
-        for product in products:
-            product_names.append(product['name'])
-            product_quantities.append(product['quantity'])
-            purchase_requirement = max(0, 100 - product['quantity'])  # Purchase requirement if quantity is less than 10
-            purchase_requirements.append(purchase_requirement)
-            sales_quantities.append(max(0, product['quantity']))  # Sales quantity (non-negative)
+            if available_qty >= 0:
+                sales_data = {
+                    "product_name": selected_product,
+                    "qty": sales_qty,
+                    "price": sales_price,
+                    "date": datetime.datetime.now()
+                }
+                sales_collection.insert_one(sales_data)
+                st.success(f"Sales recorded for {selected_product}.")
 
-        # Create a dictionary to display the data in a table
-        data = {
-            "Product Name": product_names,
-            "Quantity": product_quantities,
-            "Sales Product": purchase_requirements,
-            "In Stock": sales_quantities
-        }
+                # Update product quantity in the product collection
+                products_collection.update_one({"name": selected_product}, {"$set": {"qty": available_qty}})
+            else:
+                st.error(f"Insufficient quantity for {selected_product}.")
+        else:
+            st.error(f"Product not found in the inventory.")
 
-        # Calculate the total purchase quantity and display it
-        total_purchase_quantity = sum(product_quantities)
-        st.subheader("Total Purchase Quantity:")
-        st.write(total_purchase_quantity)
+# Dashboard
+elif page == "Dashboard":
+    st.title("Dashboard")
 
-        # Display the data in a table
-        st.table(data)
+    # Product details
+    st.subheader("Product Details")
+    product_df = fetch_data_as_dataframe(products_collection)
+    st.dataframe(product_df)  # Display product data in a Pandas DataFrame
 
-        st.subheader("Total Products in Inventory:")
-        total_products = sum(product_quantities)
-        st.write(total_products)
+    # Sales details
+    st.subheader("Sales Details")
+    sales_df = fetch_data_as_dataframe(sales_collection)
+    st.dataframe(sales_df)  # Display sales data in a Pandas DataFrame
 
-    elif page == "Monthly Report":
-        # Page to generate the monthly report
-        st.header("Monthly Report")
-        month = st.selectbox("Select Month", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
-        year = st.number_input("Enter Year", value=datetime.date.today().year)
+    # Total quantities and prices
+    total_purchase_qty = product_df['qty'].sum()
+    total_purchase_price = (product_df['qty'] * product_df['price']).sum()
 
-        # Generate the monthly report
-        start_date = datetime.datetime(year, month, 1)
-        end_date = datetime.datetime(year, month + 1, 1) if month < 12 else datetime.datetime(year + 1, 1, 1)
+    total_sales_qty = sales_df['qty'].sum()
+    total_sales_price = (sales_df['qty'] * sales_df['price']).sum()
 
-        report_data = db.products.find({
-            "purchase_date": {"$gte": start_date, "$lt": end_date}
-        })
-
-        total_purchase_price = 0
-        total_sales_price = 0
-
-        # Store sales data for the report
-        sales_report_data = []
-
-        for product in report_data:
-            total_purchase_price += product['quantity'] * product['price']
-            total_sales_price += product['quantity'] * product['price']  # Assuming this is the sales price calculation
-
-            # Append sales data for the report
-            sales_report_data.append({
-                "Product Name": product["name"],
-                "Purchase Quantity": product["quantity"],
-                "Purchase Price": product["price"],
-                "Sales Date": product['purchase_date'],
-                "Sales Price": product['quantity'] * product['price'],
-                "Purchase Date": product['purchase_date'],
-            })
-
-        st.subheader("Monthly Purchase Price:")
-        st.write(f"₹{total_purchase_price:.2f}")
-
-        st.subheader("Monthly Sales Price:")
-        st.write(f"₹{total_sales_price:.2f}")
-
-        st.subheader("Monthly Profit:")
-        monthly_profit = total_sales_price - total_purchase_price
-        st.write(f"₹{monthly_profit:.2f}")
-
-        # Display the sales data in a table
-        if sales_report_data:
-            st.subheader("Monthly Sales Report")
-            st.table(pd.DataFrame(sales_report_data))
-
-# Run the app
-if __name__ == "__main__":
-    if not login:
-        st.write("Please log in to access the app.")
+    st.subheader("Total Purchase and Sales")
+    st.write(f"Total Purchase Quantity: {total_purchase_qty}")
+    st.write(f"Total Purchase Price: {total_purchase_price}")
+    st.write(f"Total Sales Quantity: {total_sales_qty}")
+    st.write(f"Total Sales Price: {total_sales_price}")
