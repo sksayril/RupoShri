@@ -124,7 +124,7 @@ if login:
         for product in products:
             product_names.append(product['name'])
             product_quantities.append(product['quantity'])
-            purchase_requirement = max(0, 10 - product['quantity'])  # Purchase requirement if quantity is less than 10
+            purchase_requirement = max(0, 100 - product['quantity'])  # Purchase requirement if quantity is less than 10
             purchase_requirements.append(purchase_requirement)
             sales_quantities.append(max(0, product['quantity']))  # Sales quantity (non-negative)
 
